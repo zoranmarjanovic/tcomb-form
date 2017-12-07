@@ -107,7 +107,8 @@ export class Component extends React.Component {
     this.typeInfo = getTypeInfo(props.type)
     this.state = {
       isPristine: true,
-      hasError: false,
+      hasError: props.options ? !!props.options.hasError : false,
+      error: this.getError(),
       value: this.getTransformer().format(props.value)
     }
   }
@@ -124,6 +125,7 @@ export class Component extends React.Component {
     const should = (
       nextState.value !== state.value ||
       nextState.hasError !== state.hasError ||
+      nextState.error !== state.error ||
       nextProps.options !== props.options ||
       nextProps.type !== props.type ||
       isArraysShallowDiffers(nextPath, curPath)
@@ -155,7 +157,8 @@ export class Component extends React.Component {
   }
 
   getValue() {
-    return this.getTransformer().parse(this.state.value)
+    const value = this.state ? this.state.value : this.getTransformer().format(this.props.value)
+    return this.getTransformer().parse(value)
   }
 
   isValueNully() {
@@ -163,12 +166,16 @@ export class Component extends React.Component {
   }
 
   removeErrors() {
-    this.setState({ hasError: false })
+    this.setState({ hasError: false, error: '' })
   }
 
   validate() {
     const result = t.validate(this.getValue(), this.props.type, this.getValidationOptions())
-    this.setState({ hasError: !result.isValid() })
+    this.setState({ hasError: !result.isValid() }, () => {
+      this.setState({
+          error: this.getError()
+      })
+    })
     return result
   }
 
@@ -208,7 +215,7 @@ export class Component extends React.Component {
   }
 
   hasError() {
-    return this.props.options.hasError || this.state.hasError
+    return this.props.options.hasError || (this.state && this.state.hasError)
   }
 
   getConfig() {
@@ -237,8 +244,8 @@ export class Component extends React.Component {
       typeInfo: this.typeInfo,
       path: this.props.ctx.path,
       isPristine: this.state.isPristine,
-      error: this.getError(),
-      hasError: this.hasError(),
+      error: this.state.error,
+      hasError: this.state.hasError,
       label: this.getLabel(),
       onChange: this.onChange,
       config: this.getConfig(),
@@ -438,6 +445,7 @@ export class Datetime extends Component {
       return defaultDatetimeValue
     },
     parse: (value) => {
+      if (Nil.is(value)) { return defaultDatetimeValue }
       const numbers = value.map(parseNumber)
       if (numbers.every(t.Number.is)) {
         return new Date(numbers[0], numbers[1], numbers[2])
@@ -461,16 +469,8 @@ export class Datetime extends Component {
 
 }
 
-class ComponentWithChildRefs extends Component {
-  childRefs = {};
-
-  setChildRefFor = prop => ref => {
-    this.childRefs[prop] = ref
-  }
-}
-
 @decorators.templates
-export class Struct extends ComponentWithChildRefs {
+export class Struct extends Component {
 
   static transformer = {
     format: value => Nil.is(value) ? noobj : value,
@@ -478,12 +478,12 @@ export class Struct extends ComponentWithChildRefs {
   }
 
   isValueNully() {
-    return Object.keys(this.childRefs).every((key) => this.childRefs[key].isValueNully())
+    return Object.keys(this.refs).every((ref) => this.refs[ref].isValueNully())
   }
 
   removeErrors() {
-    this.setState({ hasError: false })
-    Object.keys(this.childRefs).forEach((key) => this.childRefs[key].removeErrors())
+    this.setState({ hasError: false, error: '' })
+    Object.keys(this.refs).forEach((ref) => this.refs[ref].removeErrors())
   }
 
   validate() {
@@ -498,8 +498,8 @@ export class Struct extends ComponentWithChildRefs {
 
     const props = this.getTypeProps()
     for (const ref in props) {
-      if (this.childRefs.hasOwnProperty(ref)) {
-        result = this.childRefs[ref].validate()
+      if (this.refs.hasOwnProperty(ref)) {
+        result = this.refs[ref].validate()
         errors = errors.concat(result.errors)
         value[ref] = result.value
       }
@@ -515,7 +515,7 @@ export class Struct extends ComponentWithChildRefs {
       }
     }
 
-    this.setState({ hasError: errors.length > 0 })
+    this.setState({ hasError: errors.length > 0, error: this.getError() })
     return new t.ValidationResult({errors, value})
   }
 
@@ -558,7 +558,7 @@ export class Struct extends ComponentWithChildRefs {
         const propOptions = getComponentOptions(fieldsOptions[prop], noobj, propValue, type)
         inputs[prop] = React.createElement(getFormComponent(propType, propOptions), {
           key: prop,
-          ref: this.setChildRefFor(prop),
+          ref: prop,
           type: propType,
           options: propOptions,
           value: propValue,
@@ -603,7 +603,7 @@ function toSameLength(value, keys, uidGenerator) {
 }
 
 @decorators.templates
-export class List extends ComponentWithChildRefs {
+export class List extends Component {
 
   static transformer = {
     format: value => Nil.is(value) ? noarr : value,
@@ -631,8 +631,8 @@ export class List extends ComponentWithChildRefs {
   }
 
   removeErrors() {
-    this.setState({ hasError: false })
-    Object.keys(this.childRefs).forEach((key) => this.childRefs[key].removeErrors())
+    this.setState({ hasError: false, error: '' })
+    Object.keys(this.refs).forEach((ref) => this.refs[ref].removeErrors())
   }
 
   validate() {
@@ -646,7 +646,7 @@ export class List extends ComponentWithChildRefs {
     }
 
     for (let i = 0, len = this.state.value.length; i < len; i++ ) {
-      result = this.childRefs[i].validate()
+      result = this.refs[i].validate()
       errors = errors.concat(result.errors)
       value.push(result.value)
     }
@@ -658,7 +658,7 @@ export class List extends ComponentWithChildRefs {
       errors = result.errors
     }
 
-    this.setState({ hasError: errors.length > 0 })
+    this.setState({ hasError: errors.length > 0, error: this.getError() })
     return new t.ValidationResult({errors: errors, value: value})
   }
 
@@ -751,7 +751,7 @@ export class List extends ComponentWithChildRefs {
       }
       return {
         input: React.createElement(ItemComponent, {
-          ref: this.setChildRefFor(i),
+          ref: i,
           type: itemType,
           options: itemOptions,
           value: itemValue,
@@ -790,14 +790,9 @@ export class List extends ComponentWithChildRefs {
 }
 
 export class Form extends React.Component {
-  inputRef = null
-
-  setInputRef = ref => {
-    this.inputRef = ref
-  }
 
   validate() {
-    return this.inputRef.validate()
+    return this.refs.input.validate()
   }
 
   getValue() {
@@ -807,7 +802,7 @@ export class Form extends React.Component {
 
   getComponent(path) {
     const points = t.String.is(path) ? path.split('.') : path
-    return points.reduce((input, name) => input.childRefs[name], this.inputRef)
+    return points.reduce((input, name) => input.refs[name], this.refs.input)
   }
 
   getSeed() {
@@ -850,7 +845,7 @@ export class Form extends React.Component {
     const uidGenerator = this.getUIDGenerator()
 
     return React.createElement(getFormComponent(type, options), {
-      ref: this.setInputRef,
+      ref: 'input',
       type: type,
       options,
       value: value,
